@@ -114,14 +114,28 @@ class Article:
             # Convert string to json
             metadata = json.loads(metadata)
 
-            keywords = metadata['keywords'] if 'keywords' in metadata.keys() else [
-            ]
+            # keywords = metadata['keywords'] if 'keywords' in metadata.keys() else [
+            # ]
 
+            # checking for missing fields
+            if 'displayDocTitle' not in metadata:
+                metadata['displayDocTitle'] = "None"
+            
+            if 'abstract' not in metadata:
+                metadata['abstract'] = "None"
+
+            if 'displayDocTitle' not in metadata:
+                metadata['displayDocTitle'] = "None"
+            
+            if 'keywords' not in metadata:
+                metadata['keywords'] = "None"
+
+            # check for missing fields
             article_data = (metadata['displayDocTitle'], metadata['abstract'],
-                            metadata['displayPublicationDate'], keywords)
+                            metadata['displayPublicationDate'], metadata['keywords'])
 
-            # Más llamadas, pero se asegura que no se quede abierto el dichero en caso de problemas
-            # y se guarden X datos o todos
+            # Más llamadas, pero se asegura que no se quede abierto el fichero
+            # en caso de problemas y se guarden X datos o todos
             if self.file_name is not None:
                 file = open(self.file_name, 'a')
                 file.write(f'{str(article_data)}\n')
