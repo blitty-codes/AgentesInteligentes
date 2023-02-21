@@ -2,8 +2,12 @@ import re
 import json
 import requests
 from datetime import datetime
+from multiprocessing import Manager
+from multiprocessing import Process
 
 from globals import headers, base_url, issues_url
+
+N_THREADS = 10
 
 
 class Article:
@@ -18,6 +22,8 @@ class Article:
         Extrae el número de publicación y el número de la issue. Lo guarda en atributo _issues_values. Las issues son recorridas empezando desde el año actual hacia atrás.
         """
 
+        # TODO: aclarar SINCE
+
         if self.debug:
             print(f"[+] GET {issues_url}")
 
@@ -25,7 +31,7 @@ class Article:
             for issue in issues.json()["issuelist"]:
                 if self.debug:
                     print(f"[*] Decade: {issue['decade']}")
-                    print(f"\t{issue['years']}")
+                    # print(f"\t{issue['years']}")
 
                 for year in issue["years"]:
                     if self.debug:
@@ -81,7 +87,7 @@ class Article:
         if self.debug:
             print(f"[*] INFO: Number of documents: {len(self._article_links)}")
 
-    def get_info_article(self, article_url) -> (str, str, str, [str]):
+    def get_n_info_articles(self, ini, fini, articles_info) -> (str, str, str, [str]):
         """
         Extrae "titulo del artículo", "abstract", "fecha de publicación" y "keywords" del enlace del artículo pasado por parámetro.
 
@@ -90,58 +96,62 @@ class Article:
         :return: Una tupla de la siguiente forma : (str, str, str, List[str])
         """
 
-        if self.debug:
-            print(f"[+] GET {article_url}")
+        ini = int(ini)
+        fini = int(fini)
 
-        with requests.get(article_url, headers=headers) as doc:
-            if doc.status_code != 200:
-                raise Exception(
-                    f"Status code ({doc.status_code}). No article with url: {article_url}"
-                )
+        # Get information from slice [ini, fini]
+        for i in range(ini, fini):
+            article_url = f"{base_url}{self._article_links[i][1:]}toc"
+            if self.debug:
+                print(f"[+] GET {article_url} - article position: {i}")
 
-            pattern = re.compile(
-                r"xplGlobal.document.metadata=(.*?);$", re.MULTILINE | re.DOTALL)
-            metadata = ''
-            # search for variable and get json in string format
-            if r := re.search(pattern, doc.content.decode('utf-8')):
-                metadata = r.group(1)
-            else:
-                raise Exception(f"No group with pattern : {re}")
+            with requests.get(article_url, headers=headers) as doc:
+                if doc.status_code != 200:
+                    raise Exception(
+                        f"Status code ({doc.status_code}). No article with url: {article_url}"
+                    )
 
-            # if any non-printable character in string, delete
-            metadata = re.sub(r'/\\x[0-9a-zA-z][0-9a-zA-z]/g', '', metadata)
+                pattern = re.compile(
+                    r"xplGlobal.document.metadata=(.*?);$", re.MULTILINE | re.DOTALL)
+                metadata = ''
+                # search for variable and get json in string format
+                if r := re.search(pattern, doc.content.decode('utf-8')):
+                    metadata = r.group(1)
+                else:
+                    raise Exception(f"No group with pattern : {re}")
 
-            # Convert string to json
-            metadata = json.loads(metadata)
+                # if any non-printable character in string, delete
+                metadata = re.sub(
+                    r'/\\x[0-9a-zA-z][0-9a-zA-z]/g', '', metadata)
 
-            # keywords = metadata['keywords'] if 'keywords' in metadata.keys() else [
-            # ]
+                # Convert string to json
+                metadata = json.loads(metadata)
 
-            # checking for missing fields
-            if 'displayDocTitle' not in metadata:
-                metadata['displayDocTitle'] = "None"
-            
-            if 'abstract' not in metadata:
-                metadata['abstract'] = "None"
+                # checking for missing fields
+                if 'displayDocTitle' not in metadata:
+                    metadata['displayDocTitle'] = "None"
 
-            if 'displayDocTitle' not in metadata:
-                metadata['displayDocTitle'] = "None"
-            
-            if 'keywords' not in metadata:
-                metadata['keywords'] = "None"
+                if 'abstract' not in metadata:
+                    metadata['abstract'] = "None"
 
-            # check for missing fields
-            article_data = (metadata['displayDocTitle'], metadata['abstract'],
-                            metadata['displayPublicationDate'], metadata['keywords'])
+                if 'displayDocTitle' not in metadata:
+                    metadata['displayDocTitle'] = "None"
 
-            # Más llamadas, pero se asegura que no se quede abierto el fichero
-            # en caso de problemas y se guarden X datos o todos
-            if self.file_name is not None:
-                file = open(self.file_name, 'a')
-                file.write(f'{str(article_data)}\n')
-                file.close()
+                if 'keywords' not in metadata:
+                    metadata['keywords'] = "None"
 
-        return article_data
+                # check for missing fields
+                article_data = (metadata['displayDocTitle'], metadata['abstract'],
+                                metadata['displayPublicationDate'], metadata['keywords'])
+
+                # Más llamadas, pero se asegura que no se quede abierto el fichero
+                # en caso de problemas y se guarden X datos o todos
+                if self.file_name is not None:
+                    file = open(self.file_name, 'a')
+                    file.write(f'{str(article_data)}\n')
+                    file.close()
+
+            articles_info.append(article_data)
 
     def get_all_articles(self) -> [(str, str, str, str)]:
         """
@@ -150,19 +160,34 @@ class Article:
         :return: Una lista compuesta por [(str, str, str, str)]
         """
 
-        articles = []
+        # lista de acceso común para todos los procesos involucrados
+        manager = Manager()
+        articles_info = manager.list()
 
-        i = 0
-        for article in self._article_links:
-            if self.debug:
-                print(f"[*] INFO: {i}")
+        # gestión de slices para cada proceso (tamaño y función a ejecutar)
+        n = len(self._article_links)
+        size = n/N_THREADS
 
-            articles.append(self.get_info_article(
-                f"{base_url}{article[1:]}toc"))
+        # creación de procesos
+        processes = []
 
-            i += 1
+        for i in range(0, N_THREADS):
+            ini = i*size
+            fini = ini + size
 
-        return articles
+            proc = Process(target=self.get_n_info_articles,
+                           args=(ini, fini, articles_info))
+            processes.append(proc)
+
+        for p in processes:
+            p.start()
+
+        for p in processes:
+            p.join()
+
+        # https://stackoverflow.com/questions/10415028/how-to-get-the-return-value-of-a-function-passed-to-multiprocessing-process
+
+        return articles_info
 
     def extract(self, n, since=None):
         """Extrae la información de ilos últimos n artículos hasta since
@@ -194,6 +219,6 @@ class Article:
             if n <= len(self._article_links):
                 break
 
-        articles = self.get_all_articles()[:n]
+        articles = self.get_all_articles()
 
         return articles

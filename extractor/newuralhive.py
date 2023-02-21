@@ -26,6 +26,6 @@ from article import Article
 if __name__ == '__main__':
     # for row in extract(n=20):
     art = Article(debug=True, save_to_file=False)
-    articles = art.extract(1)
+    articles = art.extract(2000)
 
     print(len(articles))
