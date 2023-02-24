@@ -21,11 +21,11 @@ enlaces:
 """
 
 from article import Article
+from datetime import datetime
 
 
 if __name__ == '__main__':
-    # for row in extract(n=20):
     art = Article(debug=True, save_to_file=False)
-    articles = art.extract(2000)
+    articles = art.extract(50, since=datetime.fromisoformat('2019-12-01'))
 
     print(len(articles))
