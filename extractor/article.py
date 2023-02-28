@@ -148,7 +148,10 @@ class Article:
             raise Exception(f'This IEEE website is a pice of s*. This article does not have a Title - position: {i}')
 
         if "keywords" in metadata:
-            keywords = metadata["keywords"]
+            ieeekeywords = metadata["keywords"]
+            keywords = ieeekeywords["kwd"]
+        else:
+            raise Exception(f'No keywords on article: "{title}" - position: {i}')
 
         if 'abstract' not in metadata:
             raise Exception(f'No abstract on article: "{title}" - position: {i}')
