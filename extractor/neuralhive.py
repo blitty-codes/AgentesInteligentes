@@ -24,7 +24,6 @@ import argparse
 from article import Article
 from datetime import datetime
 
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Agente extractor de datos de artículos para la página: https://ieeexplore.ieee.org/xpl/RecentIssue.jsp?punumber=9739')
     parser.add_argument('-n', '--num_files', type=int, required=True, help='Numero de articulos a extraer')
