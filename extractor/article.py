@@ -14,6 +14,7 @@ class Article:
     def __init__(self, debug=True, save_to_file=True):
         self._article_links = []
         self._issues_values = []
+        self._date = datetime.now()
         self.debug = debug
         self.file_name = '' if save_to_file else None
 
@@ -22,8 +23,6 @@ class Article:
         Extrae el número de publicación y el número de la issue. Lo guarda en atributo _issues_values. Las issues son recorridas empezando desde el año actual hacia atrás.
         """
 
-        # TODO: aclarar SINCE
-
         if self.debug:
             print(f"[+] GET {issues_url}")
 
@@ -31,7 +30,6 @@ class Article:
             for issue in issues.json()["issuelist"]:
                 if self.debug:
                     print(f"[*] Decade: {issue['decade']}")
-                    # print(f"\t{issue['years']}")
 
                 for year in issue["years"]:
                     if self.debug:
@@ -39,18 +37,18 @@ class Article:
                         print(
                             f"\t\t\t[-] Number of issues: {len(year['issues'])}")
 
-                    for iss in year['issues']:
-                        self._issues_values.append(
-                            (iss['publicationNumber'], iss['issueNumber']))
+                    # displayPublicationDate
+                    if self._date.year >= int(year["year"]):
+                        for iss in year['issues']:
+                            self._issues_values.append(
+                                (iss['publicationNumber'], iss['issueNumber']))
 
-    def get_n_articles(self, pub_number, issue_number, n):
+    def get_url_articles(self, pub_number, issue_number):
         """
         Extrae el enlace del artículo pasado por parámetro. Se decartan los artículos "Table of Content" o "Editorial tutorials".
 
-        :param pub_number: número de publicación
-        :param issue_number: número de la issue (artículo)
-        :param n: El número de artículos de los que extraer datos. Debe
-            ser un entero mayor que 0.
+        :param pub_number: Número de publicación
+        :param issue_number: Número de la issue (artículo)
         :raise Exception: No se encuentra la url o no puede ser alcanzada.
         """
 
@@ -75,25 +73,25 @@ class Article:
 
             for article in res.json()["records"]:
                 # don't get articles like TOC or tutorials from IEEE
-                if "Editorial:" not in article["articleTitle"] and "Table of" not in article["articleTitle"]:
+                if "Quarter" not in article["articleTitle"] and "Editorial:" not in article["articleTitle"] and "Table of" not in article["articleTitle"]:
                     if "htmlLink" in article.keys():
                         self._article_links.append(article["htmlLink"])
                     else:
                         self._article_links.append(article["documentLink"])
 
-        # no realizar busquedas de más
-        self._article_links = self._article_links[:n]
-
         if self.debug:
             print(f"[*] INFO: Number of documents: {len(self._article_links)}")
 
-    def get_n_info_articles(self, ini, fini, articles_info) -> (str, str, str, [str]):
+    def get_info_articles(self, ini, fini, articles_info: Manager, n):
         """
-        Extrae "titulo del artículo", "abstract", "fecha de publicación" y "keywords" del enlace del artículo pasado por parámetro.
+        Extrae "titulo del artículo", "abstract", "fecha de publicación" y "keywords" de los enlaces pasados, desde 'ini' hasta 'fini', guardándolo en el Manager `articles_info` pasado por parámetro.
 
-        :param article_url: URL del artículo.
+        This is a thread based method.
+
+        :param ini: Initial index to start.
+        :param fini: Final index to stop.
+        :param articles_info: List from a Manager object to save tuples.
         :raise Exception: No se encuentra la url o no puede ser alcanzada.
-        :return: Una tupla de la siguiente forma : (str, str, str, List[str])
         """
 
         ini = int(ini)
@@ -140,20 +138,19 @@ class Article:
                 if 'keywords' not in metadata:
                     metadata['keywords'] = "None"
 
-                # check for missing fields
-                article_data = (metadata['displayDocTitle'], metadata['abstract'],
-                                metadata['displayPublicationDate'], metadata['keywords'])
+                if datetime.strptime(metadata['displayPublicationDate'], '%d %B %Y') <= self._date:
+                    article_data = (metadata['displayDocTitle'], metadata['abstract'],
+                                    metadata['displayPublicationDate'], metadata['keywords'])
+                    articles_info.append(article_data)
 
                 # Más llamadas, pero se asegura que no se quede abierto el fichero
                 # en caso de problemas y se guarden X datos o todos
-                if self.file_name is not None:
+                if self.file_name is not None and article_data:
                     file = open(self.file_name, 'a')
                     file.write(f'{str(article_data)}\n')
                     file.close()
 
-            articles_info.append(article_data)
-
-    def get_all_articles(self) -> [(str, str, str, str)]:
+    def get_all_articles(self, n) -> [(str, str, str, str)]:
         """
         Helper function. Ayuda a coger la información de varios artículos
 
@@ -175,8 +172,8 @@ class Article:
             ini = i*size
             fini = ini + size
 
-            proc = Process(target=self.get_n_info_articles,
-                           args=(ini, fini, articles_info))
+            proc = Process(target=self.get_info_articles,
+                           args=(ini, fini, articles_info, n))
             processes.append(proc)
 
         for p in processes:
@@ -201,6 +198,10 @@ class Article:
             siguiente forma: (str, str, str, str, List[str])
         """
 
+        if since is not None:
+            self._date = since
+            self._date.replace(year = self._date.year + 1)
+
         self.get_issues()
 
         if self.file_name is not None:
@@ -213,12 +214,13 @@ class Article:
 
         for issue in self._issues_values:
             # get articles from one issue
-            self.get_n_articles(issue[0], issue[1], n)
+            self.get_url_articles(issue[0], issue[1])
 
             # more values than needed
             if n <= len(self._article_links):
                 break
 
-        articles = self.get_all_articles()
+        articles = self.get_all_articles(n)
 
-        return articles
+        return sorted(articles, key=lambda x: datetime.strptime(x[2], '%d %B %Y'))[:n]
+
