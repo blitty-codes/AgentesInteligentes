@@ -1,22 +1,23 @@
 import re
 import json
 import requests
+import time
 import logging
+from contextlib import nullcontext
 from datetime import datetime
-from multiprocessing import Process, Manager
+from typing import Text, List, Tuple
+from multiprocessing import Manager, Process, cpu_count
 
 from globals import HEADERS, ISSUES_URL, MAGAZINE_URL, BASE_URL
 
-N_THREADS = 10
-
 
 class Article:
-    def __init__(self, debug=True, save_to_file=True):
+    def __init__(self, save_to_file=True, n_jobs=-1):
         self._article_links = []
         self._issues_values = []
         self._date = datetime.now()
-        self.debug = debug
         self.file_name = '' if save_to_file else None
+        self.n_threads = cpu_count()-1 if n_jobs == -1 else min(n_jobs, cpu_count()-1)
         self.magazine_name = self.get_magazine_name()
 
     def get_magazine_name(self):
@@ -32,18 +33,12 @@ class Article:
         Extrae el número de publicación y el número de la issue. Lo guarda en atributo _issues_values. Las issues son recorridas empezando desde el año actual hacia atrás.
         """
 
-        if self.debug:
-            logging.info(f"[+] GET {ISSUES_URL}")
+        logging.debug(f"GET {ISSUES_URL}")
 
         with requests.get(ISSUES_URL, headers=HEADERS) as issues:
             for issue in issues.json()["issuelist"]:
-                if self.debug:
-                    logging.info(f"[*] Decade: {issue['decade']}")
-
                 for year in issue["years"]:
-                    if self.debug:
-                        logging.info(f"\t\t[*] Year: {year['year']}")
-                        logging.info(f"\t\t\t[*] Number of issues: {len(year['issues'])}")
+                    logging.debug(f"Number of issues found in the decade of {issue['decade']} by the year {year['year']}: {len(year['issues'])}")
 
                     # displayPublicationDate
                     if self._date.year >= int(year["year"]):
@@ -51,7 +46,7 @@ class Article:
                             self._issues_values.append(
                                 (iss['publicationNumber'], iss['issueNumber']))
 
-    def get_url_articles(self, pub_number, issue_number):
+    def get_url_articles(self, pub_number: Text, issue_number: Text):
         """
         Extrae el enlace del artículo pasado por parámetro. Se decartan los artículos "Table of Content" o "Editorial tutorials".
 
@@ -62,8 +57,7 @@ class Article:
 
         issue_url = f"{BASE_URL}rest/search/pub/{pub_number}/issue/{issue_number}/toc"
 
-        if self.debug:
-            logging.info(f"[+] POST {issue_url}")
+        logging.debug(f"POST {issue_url}")
 
         payload = {
             "isnumber": issue_number,
@@ -85,10 +79,9 @@ class Article:
                 else:
                     self._article_links.append(article["documentLink"])
 
-        if self.debug:
-            logging.info(f"[*] Number of documents: {len(self._article_links)}")
+        logging.info(f"Number of documents: {len(self._article_links)}")
 
-    def parse_article_data(self, doc: str, i: int) -> (str, str, str, [str]):
+    def parse_article_data(self, doc: str, i: int) -> Tuple[str, str, str, List[str]]:
         """
         Dado un documento HTML de un artículo, extrae la información de titulo, abstract, fecha y palabras clave. En caso de que no exista alguno de los tres primeros mencionados, la función devolverá un Exception.
 
@@ -148,7 +141,7 @@ class Article:
             raise Exception(f'This IEEE website is a pice of s*. This article does not have a Title - position: {i}')
 
         if "keywords" in metadata:
-            ieeekeywords = metadata["keywords"]
+            ieeekeywords = metadata["keywords"][0]
             keywords = ieeekeywords["kwd"]
         else:
             raise Exception(f'No keywords on article: "{title}" - position: {i}')
@@ -167,7 +160,7 @@ class Article:
 
         return title, abstract, date, keywords
 
-    def get_info_articles(self, ini, fini, articles_info: Manager):
+    def get_info_articles(self, ini: int, fini: int, articles_info: Manager) -> None:
         """
         Extrae "titulo del artículo", "abstract", "fecha de publicación" y "keywords" de los enlaces pasados, desde 'ini' hasta 'fini', guardándolo en el Manager `articles_info` pasado por parámetro.
 
@@ -179,14 +172,10 @@ class Article:
         :raise Exception: No se encuentra la url o no puede ser alcanzada.
         """
 
-        ini = int(ini)
-        fini = int(fini)
-
         # Get information from slice [ini, fini]
-        for i in range(ini, fini):
+        for i in range(int(ini), int(fini)):
             article_url = f"{BASE_URL}{self._article_links[i][1:]}"
-            if self.debug:
-                logging.info(f"[+] GET {article_url} - article position: {i}")
+            logging.info(f"GET {article_url} - article position: {i}")
 
             with requests.get(article_url, headers=HEADERS) as doc:
                 if doc.status_code != 200:
@@ -197,27 +186,25 @@ class Article:
                 try:
                     title, abstract, date, keywords = self.parse_article_data(doc, i)
                 except Exception as e:
-                    if self.debug:
-                        logging.error(f'[!] EXCEPTION: {str(e)}')
+                    logging.error(f'EXCEPTION: {str(e)}')
                 else:
                     if datetime.strptime(date, '%d %B %Y') <= self._date:
                         article_data = (self.magazine_name, title, abstract, date, keywords)
                         articles_info.append(article_data)
                     else:
-                        logging.error(f'[!] GET article position: {i} is from dates ({date})')
+                        logging.error(f'GET article position: {i} is from dates ({date})')
 
                     # Más llamadas, pero se asegura que no se quede abierto el fichero
                     # en caso de problemas y se guarden X datos o todos
-                    if self.file_name is not None and article_data:
-                        file = open(self.file_name, 'a')
-                        file.write(f'{str(article_data)}\n')
-                        file.close()
+                    if self.file_name and article_data:
+                        with open(self.file_name, 'a') as file:
+                            file.write(f'{str(article_data)}\n')
 
-    def get_all_articles(self) -> [(str, str, str, str, str)]:
+    def get_all_articles(self) -> List[Tuple[Text, Text, Text, Text]]:
         """
         Helper function. Ayuda a coger la información de varios artículos
 
-        :return: Una lista compuesta por [(str, str, str, str, str)]
+        :return: Una lista compuesta por [(Text, Text, Text, Text)]
         """
 
         # lista de acceso común para todos los procesos involucrados
@@ -226,16 +213,14 @@ class Article:
 
         # gestión de slices para cada proceso (tamaño y función a ejecutar)
         n_art = len(self._article_links)
-        size = n_art/N_THREADS
+        size = n_art/self.n_threads
+        logging.debug(f'Extractor running in {self.n_threads} processes')
         # creación de procesos
         processes = []
 
-        for i in range(0, N_THREADS):
-            ini = i*size
-            fini = ini + size
-
+        for i in range(0, self.n_threads):
             proc = Process(target=self.get_info_articles,
-                           args=(ini, fini, articles_info))
+                           args=((i*size), (i*size + size), articles_info))
             processes.append(proc)
 
         for p in processes:
@@ -248,7 +233,7 @@ class Article:
 
         return articles_info
 
-    def extract(self, n, since=None) -> [(str, str, str, str, [str])]:
+    def extract(self, n: int, since: datetime = datetime.now()) -> List[Tuple[Text, Text, Text, Text]]:
         """Extrae la información de ilos últimos n artículos hasta since
 
         :param n: El número de artículos de los que extraer datos. Debe
@@ -259,23 +244,20 @@ class Article:
         :return: Una lista de tuplas donde cada tupla tendrá la
             siguiente forma: (str, str, str, str, List[str])
         """
+        st = time.time()
 
-        if self.debug:
-            logging.basicConfig(filename=f'app-n_{n}_since_{since}.log', filemode='w', format='%(levelname)s - %(message)s', encoding='utf-8', level=logging.INFO)
-
-        if since is not None:
-            self._date = since
-            self._date = self._date.replace(year=self._date.year + 1)
+        self._date = since
+        self._date = self._date.replace(year=self._date.year + 1)
 
         self.get_issues()
 
         if self.file_name is not None:
             date = datetime.now()
-            self.file_name = f'articles_info_{n}_{date.year}-{date.month}-{date.day}-{date.hour}-{date.minute}-{date.second}'
+            self.file_name = f'articles_info_{n}_{date.year}-{date.month}-{date.day}-{date.hour}-{date.minute}-{date.second}.txt'
 
             f = open(self.file_name, "w")
             f.close()
-            logging.info(f"[*] File named: {self.file_name} created")
+            logging.info(f"File named: {self.file_name} created")
 
         for issue in self._issues_values:
             # get articles from one issue
@@ -287,5 +269,6 @@ class Article:
 
         articles = self.get_all_articles()
         articles = sorted(articles, key=lambda x: datetime.strptime(x[3], '%d %B %Y'))
+        logging.info(f'Tiempo de extracción: {round(time.time() - st, 3)}s')
 
         return articles[:n]
