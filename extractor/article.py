@@ -3,10 +3,11 @@ import json
 import requests
 import time
 import logging
-from contextlib import nullcontext
+import pandas as pd
 from datetime import datetime
 from typing import Text, List, Tuple
 from multiprocessing import Manager, Process, cpu_count
+import pandas as pd
 
 from globals import HEADERS, ISSUES_URL, MAGAZINE_URL, BASE_URL
 
@@ -16,7 +17,9 @@ class Article:
         self._article_links = []
         self._issues_values = []
         self._date = datetime.now()
-        self.file_name = '' if save_to_file else None
+        self._checkpoint = "UwU" if save_to_file else None
+        self._article_columns = ["Survey", "Title", "Abstract", "Date", "Keywords"]
+        self._n = 0
         self.n_threads = cpu_count()-1 if n_jobs == -1 else min(n_jobs, cpu_count()-1)
         self.magazine_name = self.get_magazine_name()
 
@@ -27,7 +30,7 @@ class Article:
         
         with requests.get(MAGAZINE_URL, headers=HEADERS) as mgz:
             return mgz.json()[0]["title"]
-        
+
     def get_issues(self):
         """
         Extrae el número de publicación y el número de la issue. Lo guarda en atributo _issues_values. Las issues son recorridas empezando desde el año actual hacia atrás.
@@ -45,6 +48,7 @@ class Article:
                         for iss in year['issues']:
                             self._issues_values.append(
                                 (iss['publicationNumber'], iss['issueNumber']))
+
 
     def get_url_articles(self, pub_number: Text, issue_number: Text):
         """
@@ -80,6 +84,7 @@ class Article:
                     self._article_links.append(article["documentLink"])
 
         logging.info(f"Number of documents: {len(self._article_links)}")
+
 
     def parse_article_data(self, doc: str, i: int) -> Tuple[str, str, str, List[str]]:
         """
@@ -132,13 +137,12 @@ class Article:
         date = ''
         keywords = []
         
-        # TODO: Only get keywords as string, not json or whatever it fetches
         if 'title' in metadata:
             title = metadata['title']
         elif 'displayDocTitle' in metadata:
             title = metadata['displayDocTitle']
         else:
-            raise Exception(f'This IEEE website is a pice of s*. This article does not have a Title - position: {i}')
+            raise Exception(f'This IEEE website is a pice of 💩. This article does not have a Title - position: {i}')
 
         if "keywords" in metadata:
             ieeekeywords = metadata["keywords"][0]
@@ -159,6 +163,7 @@ class Article:
             raise Exception(f'No date of publication on article: "{title}" - position: {i}')
 
         return title, abstract, date, keywords
+
 
     def get_info_articles(self, ini: int, fini: int, articles_info: Manager) -> None:
         """
@@ -194,12 +199,6 @@ class Article:
                     else:
                         logging.error(f'GET article position: {i} is from dates ({date})')
 
-                    # Más llamadas, pero se asegura que no se quede abierto el fichero
-                    # en caso de problemas y se guarden X datos o todos
-                    if self.file_name and article_data:
-                        with open(self.file_name, 'a') as file:
-                            file.write(f'{str(article_data)}\n')
-
     def get_all_articles(self) -> List[Tuple[Text, Text, Text, Text]]:
         """
         Helper function. Ayuda a coger la información de varios artículos
@@ -215,6 +214,7 @@ class Article:
         n_art = len(self._article_links)
         size = n_art/self.n_threads
         logging.debug(f'Extractor running in {self.n_threads} processes')
+
         # creación de procesos
         processes = []
 
@@ -230,8 +230,8 @@ class Article:
             p.join()
 
         # https://stackoverflow.com/questions/10415028/how-to-get-the-return-value-of-a-function-passed-to-multiprocessing-process
-
         return articles_info
+
 
     def extract(self, n: int, since: datetime = datetime.now()) -> List[Tuple[Text, Text, Text, Text]]:
         """Extrae la información de ilos últimos n artículos hasta since
@@ -246,29 +246,36 @@ class Article:
         """
         st = time.time()
 
+        self._n = n
         self._date = since
         self._date = self._date.replace(year=self._date.year + 1)
 
+        if self._checkpoint:
+            self._checkpoint = f"app_n_{n}_since_{since.strftime('%Y-%m-%d')}.csv"
+
         self.get_issues()
-
-        if self.file_name is not None:
-            date = datetime.now()
-            self.file_name = f'articles_info_{n}_{date.year}-{date.month}-{date.day}-{date.hour}-{date.minute}-{date.second}.txt'
-
-            f = open(self.file_name, "w")
-            f.close()
-            logging.info(f"File named: {self.file_name} created")
 
         for issue in self._issues_values:
             # get articles from one issue
             self.get_url_articles(issue[0], issue[1])
 
             # more values than needed
-            if n <= len(self._article_links):
+            if self._n * 2 <= len(self._article_links):
                 break
 
         articles = self.get_all_articles()
-        articles = sorted(articles, key=lambda x: datetime.strptime(x[3], '%d %B %Y'))
+        articles = sorted(articles, key=lambda x: datetime.strptime(x[3], '%d %B %Y') and since >= datetime.strptime(x[3], '%d %B %Y'), reverse=True)[:n]
+
+        if self._checkpoint:
+            df_articles = pd.DataFrame(articles, columns=self._article_columns)
+            # sorting for readability, placing abstract at the end
+            new_order = ["Date", "Survey", "Title", "Keywords", "Abstract"]
+            df_articles=df_articles.reindex(columns=new_order)
+
+            df_articles.to_csv(self._checkpoint, index=False)
+            logging.info(f"HE METIDO {len(df_articles)} ARTICULOS AL CSV, SALUDOS")
+
+
         logging.info(f'Tiempo de extracción: {round(time.time() - st, 3)}s')
 
-        return articles[:n]
+        return articles

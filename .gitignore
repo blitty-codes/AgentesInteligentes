@@ -1,4 +1,6 @@
 .idea
+*.csv
+*.log
 extractor/articles_info_*
 
 # Byte-compiled / optimized / DLL files
