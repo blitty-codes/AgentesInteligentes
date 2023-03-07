@@ -7,7 +7,6 @@ import pandas as pd
 from datetime import datetime
 from typing import Text, List, Tuple
 from multiprocessing import Manager, Process, cpu_count
-import pandas as pd
 
 from globals import HEADERS, ISSUES_URL, MAGAZINE_URL, BASE_URL
 
@@ -27,7 +26,7 @@ class Article:
         """
         Extrae el título de la revista de IEEE
         """
-        
+
         with requests.get(MAGAZINE_URL, headers=HEADERS) as mgz:
             return mgz.json()[0]["title"]
 
@@ -113,7 +112,7 @@ class Article:
                 return  f"1 July {year}"
             elif 'Fourth' in pub_date:
                 return  f"1 October {year}"
-            
+
             return pub_date
 
         pattern = re.compile(
@@ -136,7 +135,7 @@ class Article:
         abstract = ''
         date = ''
         keywords = []
-        
+
         if 'title' in metadata:
             title = metadata['title']
         elif 'displayDocTitle' in metadata:

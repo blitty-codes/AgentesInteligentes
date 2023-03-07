@@ -4,7 +4,7 @@ Este agente se encarga de la extracción de datos de la revista
 IEEE Communications Surveys & Tutorials.
 
 Para funcionar, el script requiere que estén instaladas las
-bibliotecas `numpy` y `requests`.
+bibliotecas `pandas`, `requests`.
 
 Para más información acerca de buenas prácticas de documentación
 de código el siguiente enlace es muy bueno:
@@ -25,7 +25,6 @@ import logging
 import sys
 from article import Article
 from datetime import datetime
-import pandas as pd
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Extracting agent for the website: https://ieeexplore.ieee.org/xpl/RecentIssue.jsp?punumber=9739')
