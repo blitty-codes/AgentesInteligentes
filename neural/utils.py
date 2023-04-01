@@ -16,7 +16,7 @@ def tokenize_and_add_padding(words, tokenizer, max_sequence_length):
     return sequences, word_index, data
 
 
-def plot_history(history):
+def plot_history(history, metric):
     plt.subplot(1, 2, 1)
     plt.plot(history.history['loss'], label='Training')
     plt.plot(history.history['val_loss'], label='Validation')
@@ -26,11 +26,12 @@ def plot_history(history):
     plt.legend()
 
     plt.subplot(1, 2, 2)
-    plt.plot(history.history['accuracy'], label='Training')
-    plt.plot(history.history['val_accuracy'], label='Validation')
+    #plt.plot(history.history['accuracy'], label='Training')
+    plt.plot(history.history[f'{metric}'], label='Training')
+    plt.plot(history.history[f'val_{metric}'], label='Validation')
     plt.xlabel('Epoch')
     plt.ylabel('Accuracy')
-    plt.title(f'Training: {history.history["accuracy"][-1]:.2f}, validation: {history.history["val_accuracy"][-1]:.2f}')
+    plt.title(f'Training: {history.history[f"{metric}"][-1]:.2f}, validation: {history.history[f"val_{metric}"][-1]:.2f}')
     plt.legend()
 
     plt.show()
